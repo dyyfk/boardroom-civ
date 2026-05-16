@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev": "concurrently -k -n cognee,server,web -c green,blue,magenta \"npm:dev:cognee\" \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:cognee": "uv run --with-requirements cognee_sidecar/requirements.txt python cognee_sidecar/main.py",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",

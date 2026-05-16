@@ -88,6 +88,8 @@ The lint results become part of the demo: users can see the agent improve its ow
 
 ## Quickstart
 
+Prereqs: Node 18+ and [`uv`](https://docs.astral.sh/uv/) (`brew install uv` on macOS). `uv` runs the Python sidecar in an ephemeral venv, so you don't manage Python deps manually.
+
 ```bash
 npm install
 npm run dev
@@ -95,12 +97,15 @@ npm run dev
 
 Then open <http://127.0.0.1:5180/>.
 
-The dev script runs both servers concurrently:
+The dev script runs three processes concurrently:
 
-| service       | port | role                                                  |
-| ------------- | ---: | ----------------------------------------------------- |
-| Vite (web)    | 5180 | React app                                             |
-| Express (api) | 5181 | Agent endpoints (`/api/resolve`, `/advisor`, `/lint`) |
+| service              | port | role                                                                          |
+| -------------------- | ---: | ----------------------------------------------------------------------------- |
+| Vite (web)           | 5180 | React app                                                                     |
+| Express (api)        | 5181 | Agent endpoints (`/api/resolve`, `/advisor`, `/lint`, `/memory-stats`)        |
+| Cognee sidecar (py)  | 5182 | FastAPI wrapper around the cognee knowledge graph (Ingest / Query / Audit)    |
+
+The first `npm run dev` installs cognee + ~130 transitive deps via `uv` and downloads the local embedding model — expect 30–90 seconds on cold start. Subsequent runs are instant.
 
 ### Going live with Claude
 
@@ -137,8 +142,52 @@ If a call fails for any reason the server falls back per-request, so the demo ne
 
 - **State** lives in a Zustand store (`src/state/store.ts`). The store is persisted to `localStorage` under `boardroom-civ:v1`, so a refresh keeps your branch.
 - **Round resolution** is a single `POST /api/resolve` call. The server returns: a `worldReaction` (customers / investors / regulators / competitors / employees / optional chaos), `branchOutcomes`, `newAssumptions`, `updatedAssumptionIds`, and `wikiPatches`. The store applies them atomically and rerenders the timeline, capital, and wiki.
-- **Wiki sections** are kept as Markdown strings on `state.wiki`. The drawer renders them via a small inline Markdown renderer. The *Decision Log*, *Assumptions*, and *Company Profile* sections are re-derived from structured state every round. Other sections (*Competitors*, *Risks*) are append-only and patched by the agent.
+- **Wiki sections** are kept as Markdown strings on `state.wiki` for rendering. The drawer renders them via a small inline Markdown renderer. The *Decision Log*, *Assumptions*, and *Company Profile* sections are re-derived from structured state every round. Other sections (*Competitors*, *Risks*) are append-only and patched by the agent.
+- **Wiki memory** (separate from rendering) lives in a Cognee knowledge graph behind a Python FastAPI sidecar — see the next section.
 - **The advisor never sees chaos.** Server-side, the advisor endpoint only receives wiki state — no chaos seed. That's deliberate: the demo makes the point that wiki-based reasoning has known limits.
+
+## Cognee: the Living Wiki's memory layer
+
+The Markdown wiki is what you read. The **memory** behind it lives in a [Cognee](https://www.cognee.ai/) knowledge graph. Cognee is an open-source agentic memory engine — it combines embeddings, a graph, and structured extraction so the same data is searchable by meaning *and* connected by relationships. In Boardroom Civ it backs all three hackathon operations end-to-end:
+
+| operation | wire                          | what it actually does                                                                                                                                                                                                                                |
+| --------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ingest    | `cognee.remember(text)`       | After every resolved round, the Express server fires-and-forgets a structured payload (event, action, world reaction, new assumptions, wiki patches) into the graph. Cognee runs add + cognify + improve in one call — entities and edges are extracted automatically. |
+| Query     | `cognee.recall(query)`        | When you press **Ask Company Wiki**, the advisor first pulls graph-grounded excerpts about the current event from Cognee, then passes them to Claude with instructions to cite `[memN]` when they drove the recommendation. The advisor still never sees chaos. |
+| Lint      | `cognee.recall(audit_query)`  | When you press **Run Lint**, Express asks Cognee for graph-level contradictions / stale facts / orphan entities, then hands those findings to Claude as `[gN]` evidence alongside the current Markdown wiki. Lint now reasons about the graph, not just the rendered text. |
+
+### Process layout
+
+```
+[Vite :5180] ──> [Express :5181] ──HTTP──> [FastAPI cognee_sidecar :5182]
+                                                    │
+                                                    └── cognee 1.1.0
+                                                         ├── LLM        = Anthropic via litellm  (reuses ANTHROPIC_API_KEY)
+                                                         ├── Embeddings = fastembed (local, key-free)
+                                                         └── Stores     = SQLite + LanceDB + KuzuDB (file-based)
+```
+
+Cognee is a Python library, so we run it as a small FastAPI sidecar (`cognee_sidecar/main.py`). Express talks to it over HTTP with short timeouts and throttled warnings. If the sidecar is down or `ANTHROPIC_API_KEY` is empty, every memory call silently no-ops and the game falls back to the deterministic offline simulator — the demo never breaks because cognee is offline.
+
+### What you see in the UI
+
+Open the Living Wiki drawer; a **Memory Graph** badge sits in the footer:
+
+- `● Memory Graph · N rounds ingested · NN KB` — sidecar live, graph is writing
+- `● Memory Graph · warming` — sidecar booted but `ANTHROPIC_API_KEY` is missing, so cognee can't init its LLM
+- `● Memory Graph · offline` — sidecar unreachable; game still plays via fallback
+
+Hitting **Reset** in the top bar also POSTs `/api/memory-reset`, which calls `cognee.forget(everything=True)` — the graph wipes alongside the game state.
+
+### Configuration
+
+All of these are in `.env.example`:
+
+- **`ANTHROPIC_API_KEY`** — reused by both the game's Claude calls and Cognee's internal LLM (via litellm). One key, two consumers.
+- **`COGNEE_LLM_MODEL`** — defaults to `claude-haiku-4-5-20251001` (cheap, fast for cognify). Override for higher-quality extraction.
+- **`COGNEE_SIDECAR_URL`** / **`COGNEE_SIDECAR_PORT`** — where Express finds the sidecar.
+- Embeddings are bundled — `fastembed` with `sentence-transformers/all-MiniLM-L6-v2` (384 dim). No second key needed.
+- Graph data lives in `cognee_sidecar/.data/` and `cognee_sidecar/.system/` — both gitignored. Delete either folder for a hard reset.
 
 ## Repository Layout
 
@@ -147,9 +196,13 @@ If a call fails for any reason the server falls back per-request, so the demo ne
 ├── index.html
 ├── package.json
 ├── vite.config.ts
+├── cognee_sidecar/
+│   ├── main.py            # FastAPI on :5182 — wraps cognee.remember/recall/forget
+│   └── requirements.txt   # cognee, fastapi, uvicorn — run via `uv run --with-requirements`
 ├── server/
-│   ├── index.ts        # Express, three routes, port 5181
-│   ├── agent.ts        # Anthropic SDK calls + JSON parse
+│   ├── index.ts        # Express on :5181 — game routes + /api/memory-stats, /api/memory-reset
+│   ├── agent.ts        # Anthropic SDK calls; ingests rounds + pre-fetches graph context
+│   ├── cognee.ts       # thin HTTP client for the sidecar with soft-fail timeouts
 │   ├── fallback.ts     # deterministic offline simulator
 │   └── types.ts        # re-exports of src/types.ts
 └── src/
@@ -166,7 +219,7 @@ If a call fails for any reason the server falls back per-request, so the demo ne
     │   ├── TimelineMap.tsx
     │   ├── RightRail.tsx
     │   ├── TakeActionModal.tsx
-    │   └── LivingWikiDrawer.tsx
+    │   └── LivingWikiDrawer.tsx  # renders the Memory Graph badge
     └── styles/globals.css
 ```
 
@@ -196,4 +249,5 @@ For the live pitch:
 ## Reference Inspiration
 
 - [Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+- [Cognee](https://www.cognee.ai/) — the agentic memory engine backing the Living Wiki
 - [Hackathon event brief](https://luma.com/uhda61yp)

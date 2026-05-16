@@ -421,6 +421,10 @@ export const useGame = create<Store>((set, get) => ({
       askingWiki: false,
       lastError: null,
     });
+    // Wipe the cognee graph too so the Memory Graph badge resets along with
+    // the game state. Fire-and-forget — if the sidecar is offline, we don't
+    // care; the graph was already empty from its perspective.
+    fetch("/api/memory-reset", { method: "POST" }).catch(() => {});
   },
 
   rewind() {

@@ -1194,3 +1194,25 @@ button { font-family: inherit; cursor: pointer; }
 .actor-meta .actor-icon { color: #1877f2; }
 .actor-google .actor-icon { color: #ea4335; }
 .actor-nvidia .actor-icon { color: #76b900; }
+
+
+/* cognee memory badge in living wiki footer */
+.drawer-foot {
+  padding: 10px 22px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.memory-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.memory-badge--ready { color: #0a7f3a; border-color: #b8e6c8; background: #ecfaf1; }
+.memory-badge--warming { color: #9a6500; border-color: #f0e0a8; background: #fdf6e1; }
+.memory-badge--offline { color: #777; border-color: var(--line); background: var(--surface); }

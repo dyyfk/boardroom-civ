@@ -1,6 +1,20 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useGame } from "../state/store";
 import type { WikiSectionId } from "../types";
+
+interface MemoryStats {
+  ok: boolean;
+  ready: boolean;
+  ingested: number;
+  bytes: number;
+  last_error: string | null;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 const ORDER: WikiSectionId[] = [
   "company-profile",
@@ -16,8 +30,10 @@ export function LivingWikiDrawer({ sectionId }: { sectionId: WikiSectionId }) {
   const wiki = useGame((s) => s.wiki);
   const openWikiSection = useGame((s) => s.openWikiSection);
   const worldReactions = useGame((s) => s.worldReactions);
+  const decisionCount = useGame((s) => s.decisionLog.length);
 
   const section = wiki[sectionId];
+  const [memory, setMemory] = useState<MemoryStats | null>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -26,6 +42,24 @@ export function LivingWikiDrawer({ sectionId }: { sectionId: WikiSectionId }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [openWikiSection]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/memory-stats");
+        if (!res.ok) return;
+        const data = (await res.json()) as MemoryStats;
+        if (!cancelled) setMemory(data);
+      } catch {
+        // sidecar offline — leave memory as null
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [decisionCount, sectionId]);
 
   return (
     <div className="drawer-overlay" onClick={() => openWikiSection(null)}>
@@ -58,8 +92,33 @@ export function LivingWikiDrawer({ sectionId }: { sectionId: WikiSectionId }) {
             </>
           )}
         </div>
+        <footer className="drawer-foot">
+          <MemoryBadge stats={memory} />
+        </footer>
       </aside>
     </div>
+  );
+}
+
+function MemoryBadge({ stats }: { stats: MemoryStats | null }) {
+  if (!stats || !stats.ok) {
+    return (
+      <span className="memory-badge memory-badge--offline" title="cognee sidecar is not reachable">
+        ● Memory Graph · offline
+      </span>
+    );
+  }
+  if (!stats.ready) {
+    return (
+      <span className="memory-badge memory-badge--warming" title={stats.last_error ?? "warming up"}>
+        ● Memory Graph · warming
+      </span>
+    );
+  }
+  return (
+    <span className="memory-badge memory-badge--ready" title="cognee-backed knowledge graph">
+      ● Memory Graph · {stats.ingested} round{stats.ingested === 1 ? "" : "s"} ingested · {formatBytes(stats.bytes)}
+    </span>
   );
 }
 

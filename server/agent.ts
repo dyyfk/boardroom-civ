@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { fallbackAdvisor, fallbackLint, fallbackResolve } from "./fallback";
+import {
+  auditMemory,
+  ingestRound,
+  queryMemory,
+} from "./cognee";
 import type {
   ActionOption,
   AdvisorRecommendation,
@@ -8,6 +13,7 @@ import type {
   CompanyProfile,
   LintFinding,
   WikiSection,
+  WikiSectionId,
   WorldReaction,
 } from "./types";
 
@@ -40,8 +46,38 @@ interface ResolveInput {
   wiki: Record<string, WikiSection>;
 }
 
-export async function agentResolve(input: ResolveInput) {
-  if (!client) return fallbackResolve(input);
+export async function agentResolve(input: ResolveInput): Promise<ResolveOutput> {
+  const result = await resolveWithClient(input);
+  // Fire-and-forget: ingest this round into the cognee graph so the advisor
+  // and lint endpoints can recall it on later turns. The sidecar handles its
+  // own errors; this never blocks the response.
+  const actionLabel =
+    input.action?.label ?? (input.customMove ? `Custom move: ${input.customMove}` : "—");
+  ingestRound({
+    round: (input.decisionLog?.length ?? 0) + 1,
+    event_title: input.event.title,
+    event_date: input.event.date,
+    event_blurb: input.event.blurb,
+    action_label: actionLabel,
+    posture: input.posture,
+    company_name: input.company.name,
+    world_reaction: result.worldReaction,
+    new_assumptions: result.newAssumptions,
+    wiki_patches: result.wikiPatches,
+  });
+  return result;
+}
+
+interface ResolveOutput {
+  worldReaction: WorldReaction;
+  branchOutcomes: { id: string; label: string; status: string; detail?: string }[];
+  newAssumptions: AssumptionEntry[];
+  updatedAssumptionIds: { id: string; status: AssumptionEntry["status"] }[];
+  wikiPatches: { id: WikiSectionId; appendBody: string }[];
+}
+
+async function resolveWithClient(input: ResolveInput): Promise<ResolveOutput> {
+  if (!client) return fallbackResolve(input) as ResolveOutput;
   try {
     const user = `Round: "${input.event.title}" (${input.event.date}).
 Event blurb: ${input.event.blurb}
@@ -76,10 +112,10 @@ Inject chaos ~30% of the time. Keep wikiPatches short — 1-2 sentences each.`;
       system: SYS_PROMPT,
       messages: [{ role: "user", content: user }],
     });
-    return parseJson(res) ?? fallbackResolve(input);
+    return (parseJson<ResolveOutput>(res) ?? (fallbackResolve(input) as ResolveOutput));
   } catch (err) {
     console.error("agentResolve fell back:", err);
-    return fallbackResolve(input);
+    return fallbackResolve(input) as ResolveOutput;
   }
 }
 
@@ -94,6 +130,14 @@ interface AdvisorInput {
 
 export async function agentAdvisor(input: AdvisorInput): Promise<{ recommendation: AdvisorRecommendation }> {
   if (!client) return fallbackAdvisor(input);
+  // Pull graph-grounded excerpts from cognee before asking Claude. Soft-fails
+  // to an empty list if the sidecar is unavailable — the advisor still works.
+  const recallQuery = `${input.event.title} — relevant prior decisions, assumptions, and consequences for ${input.company.name}`;
+  const memoryExcerpts = await queryMemory(recallQuery, 5);
+  const memorySection =
+    memoryExcerpts.length > 0
+      ? `\nCognee graph excerpts (cite when relevant):\n${memoryExcerpts.map((s, i) => `[mem${i + 1}] ${s}`).join("\n")}\n`
+      : "";
   try {
     const user = `You are the "Ask Company Wiki" advisor. You see only known wiki state — never chaos events.
 
@@ -102,13 +146,13 @@ Options:
 ${input.options.map((o) => `- ${o.id}: ${o.label} (${o.posture}, base ${Math.round(o.baseSuccess * 100)}%) — ${o.rationale}`).join("\n")}
 Company: ${JSON.stringify(input.company)}
 Assumptions: ${JSON.stringify(input.assumptions)}
-
+${memorySection}
 Return JSON:
 { "recommendation": {
   "recommendedActionId": "string (one of the option ids)",
   "estimatedSuccess": number (0..1),
   "perOption": [{ "actionId": "string", "estimatedSuccess": number }],
-  "rationale": "string, 2-3 sentences citing the wiki state that drove the rank",
+  "rationale": "string, 2-3 sentences citing the wiki state that drove the rank (cite [memN] when you used a graph excerpt)",
   "blindSpot": "string, one sentence reminding the player chaos is not modeled"
 }}`;
 
@@ -135,6 +179,13 @@ interface LintInput {
 
 export async function agentLint(input: LintInput): Promise<{ findings: LintFinding[]; wikiPatches: { id: string; body: string }[] }> {
   if (!client) return fallbackLint(input);
+  // Cognee runs a graph-level audit pass. Empty if sidecar is offline or has
+  // no rounds yet — lint still works from the Markdown wiki in that case.
+  const graphFindings = await auditMemory();
+  const graphSection =
+    graphFindings.length > 0
+      ? `\nCognee graph audit findings (treat as evidence, not the final list):\n${graphFindings.map((s, i) => `[g${i + 1}] ${s}`).join("\n")}\n`
+      : "";
   try {
     const wikiSummary = Object.values(input.wiki)
       .map((s) => `### ${s.title}\n${s.body}`)
@@ -148,14 +199,14 @@ Recent reactions: ${JSON.stringify(input.worldReactions.slice(-3))}
 
 Current wiki:
 ${wikiSummary}
-
+${graphSection}
 Return JSON:
 {
   "findings": [{
     "id": "string",
     "severity": "info"|"warn"|"error",
     "section": "company-profile"|"canon-timeline"|"decision-log"|"assumptions"|"competitors"|"risks"|"lint-report",
-    "message": "what's wrong, one sentence",
+    "message": "what's wrong, one sentence (cite [gN] when a graph finding drove this)",
     "suggestion": "what to fix, one sentence"
   }],
   "wikiPatches": []

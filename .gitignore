@@ -4,3 +4,12 @@ dist
 .env.local
 *.log
 .DS_Store
+
+# typescript incremental build cache
+tsconfig.tsbuildinfo
+
+# cognee sidecar — local graph + system data
+cognee_sidecar/.data/
+cognee_sidecar/.system/
+cognee_sidecar/__pycache__/
+cognee_sidecar/.venv/
