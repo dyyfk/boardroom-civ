@@ -87,12 +87,40 @@ export function WorldReactionModal() {
           </div>
         )}
 
-        <div className="reaction-grid">
-          <ReactionTile icon={<UsersIcon />} label="Customers" body={reaction.customers} />
-          <ReactionTile icon={<MoneyIcon />} label="Investors" body={reaction.investors} />
-          <ReactionTile icon={<GavelIcon />} label="Regulators" body={reaction.regulators} />
-          <ReactionTile icon={<SwordsIcon />} label="Competitors" body={reaction.competitors} />
-          <ReactionTile icon={<TeamIcon />} label="Employees" body={reaction.employees} />
+        <div className="reaction-section">
+          <div className="reaction-section-label">Stakeholder impact</div>
+          <div className="stakeholder-stack">
+            <StakeholderImpact
+              icon={<UsersIcon />}
+              label="Customers"
+              cue="Procurement"
+              body={reaction.customers}
+            />
+            <StakeholderImpact
+              icon={<MoneyIcon />}
+              label="Investors"
+              cue="Capital"
+              body={reaction.investors}
+            />
+            <StakeholderImpact
+              icon={<GavelIcon />}
+              label="Regulators"
+              cue="Compliance"
+              body={reaction.regulators}
+            />
+            <StakeholderImpact
+              icon={<SwordsIcon />}
+              label="Competitors"
+              cue="Market"
+              body={reaction.competitors}
+            />
+            <StakeholderImpact
+              icon={<TeamIcon />}
+              label="Employees"
+              cue="Org"
+              body={reaction.employees}
+            />
+          </div>
         </div>
 
         <div className="reaction-section">
@@ -151,24 +179,38 @@ export function WorldReactionModal() {
   );
 }
 
-function ReactionTile({
+function StakeholderImpact({
   icon,
   label,
+  cue,
   body,
 }: {
   icon: React.ReactNode;
   label: string;
+  cue: string;
   body: string;
 }) {
+  const tone = impactTone(body);
   return (
-    <div className="reaction-tile">
-      <div className="reaction-tile-head">
-        <span className="reaction-tile-icon">{icon}</span>
-        <span className="reaction-tile-label">{label}</span>
+    <div className={clsx("stakeholder-row", `tone-${tone}`)}>
+      <div className="stakeholder-mark">{icon}</div>
+      <div className="stakeholder-copy">
+        <div className="stakeholder-head">
+          <span className="stakeholder-label">{label}</span>
+          <span className="stakeholder-cue">{cue}</span>
+        </div>
+        <div className="stakeholder-body">{body}</div>
       </div>
-      <div className="reaction-tile-body">{body}</div>
+      <span className="stakeholder-signal">{tone}</span>
     </div>
   );
+}
+
+function impactTone(body: string): "watch" | "gain" | "steady" {
+  const b = body.toLowerCase();
+  if (b.includes("no new") || b.includes("did not") || b.includes("no attrition")) return "steady";
+  if (b.includes("faster") || b.includes("committed") || b.includes("aligned")) return "gain";
+  return "watch";
 }
 
 function CapitalDelta({
