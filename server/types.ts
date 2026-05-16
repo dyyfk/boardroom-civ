@@ -14,4 +14,6 @@ export type {
   WorldReaction,
   ChaosEvent,
   AdvisorRecommendation,
+  CompoundPlaybook,
+  PostMortem,
 } from "../src/types";

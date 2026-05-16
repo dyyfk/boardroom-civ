@@ -10,7 +10,9 @@ import type {
   CanonEvent,
   ChaosEvent,
   CompanyProfile,
+  DecisionLogEntry,
   LintFinding,
+  PostMortem,
   WorldReaction,
 } from "./types";
 
@@ -27,20 +29,33 @@ interface ResolveInput {
 const CHAOS_EVENTS: ChaosEvent[] = [
   {
     id: "chaos-engineer-poach",
-    title: "Senior engineer poached",
-    detail: "A FAANG recruiter walked off with one of the inference leads. 90-day backfill at best.",
-    capitalDelta: -60_000,
+    title: "Senior engineer poached + signing bonus clawback",
+    detail: "A FAANG recruiter walked off with one of the inference leads. 90-day backfill at best, and the lawyer says we owe back the relocation grant.",
+    capitalDelta: -180_000,
   },
   {
     id: "chaos-press-leak",
-    title: "TechCrunch leak",
-    detail: "An unflattering Slack screenshot is going around about Northstar's open-weight stance.",
+    title: "TechCrunch leak — design partners pause",
+    detail: "An unflattering Slack screenshot is making the rounds. Two design partners 'pause' their pilots pending clarification.",
+    capitalDelta: -240_000,
   },
   {
     id: "chaos-design-partner-churn",
-    title: "Design partner pause",
-    detail: "Procurement at the largest design partner froze AI spend pending an internal audit.",
-    capitalDelta: -120_000,
+    title: "Design partner cancels pilot",
+    detail: "Procurement at the largest design partner froze AI spend pending an internal audit. They pulled the 6-figure pilot.",
+    capitalDelta: -310_000,
+  },
+  {
+    id: "chaos-datacenter-outage",
+    title: "Inference cluster 14-hour outage",
+    detail: "A GPU node fleet partially failed; reserved capacity is non-refundable and 3 paying customers invoked their SLA refunds.",
+    capitalDelta: -210_000,
+  },
+  {
+    id: "chaos-lawsuit-letter",
+    title: "Cease-and-desist over evals",
+    detail: "A rival sent a C&D claiming our public benchmarks reverse-engineer their training pipeline. Counsel says it's a fight — $400k-$1M.",
+    capitalDelta: -400_000,
   },
   {
     id: "chaos-bridge-offer",
@@ -52,7 +67,9 @@ const CHAOS_EVENTS: ChaosEvent[] = [
 
 function pickChaos(seedKey: string): ChaosEvent | undefined {
   const hash = simpleHash(seedKey);
-  if (hash % 3 === 0) return undefined;
+  // ~80% chance of chaos in offline mode (mirrors LLM path's 55% but harsher
+  // hits, since the offline simulator has fewer narrative levers).
+  if (hash % 5 === 0) return undefined;
   return CHAOS_EVENTS[hash % CHAOS_EVENTS.length];
 }
 
@@ -243,6 +260,7 @@ export function fallbackAdvisor(input: {
   const best = sorted[0];
   const winner = options.find((o) => o.id === best.actionId)!;
 
+  const secondary = options.find((o) => o.id !== winner.id) ?? winner;
   return {
     recommendation: {
       recommendedActionId: winner.id,
@@ -250,7 +268,108 @@ export function fallbackAdvisor(input: {
       perOption,
       rationale: `Based on known wiki state — your ${company.posture} posture, ${company.runwayMonths.toFixed(1)} mo runway, and active assumptions — "${winner.label}" has the highest expected success at ${Math.round(best.estimatedSuccess * 100)}%. ${winner.rationale}`,
       blindSpot: "Advisor cannot see chaos events. A senior engineer poach, a leaked memo, or a sudden bridge offer would change this rank order.",
+      playbook: {
+        primary: {
+          actionId: winner.id,
+          why: winner.rationale,
+        },
+        combineWith: [
+          {
+            move: `In parallel: stage a ${secondary.posture} fallback that mirrors "${secondary.label}" — pre-write the comms, pre-clear the contracts, but do not fire unless the primary stalls.`,
+            why: "A staged secondary cuts pivot time from weeks to days without burning capital today.",
+          },
+        ],
+        hedge:
+          company.runwayMonths < 6
+            ? "If two assumptions flip to broken in one round, immediately pivot to a bridge raise — even a flat-round $500k is cheaper than a forced shutdown."
+            : "If burn outpaces forecast by >15% by mid-round, freeze the next hire and re-baseline.",
+        pivotTriggers: [
+          "Two or more active assumptions flip to 'broken' in a single round.",
+          `Runway drops below ${Math.max(1.5, Math.floor(company.runwayMonths / 2))} mo with no committed funding in flight.`,
+        ],
+        lessonsCited: [],
+      },
     },
+  };
+}
+
+export function fallbackPostMortem(input: {
+  gameId: number;
+  outcome: "dead" | "won";
+  company: CompanyProfile;
+  decisionLog: DecisionLogEntry[];
+  worldReactions: WorldReaction[];
+  assumptions: AssumptionEntry[];
+  deathReason?: string;
+}): PostMortem {
+  const rounds = input.decisionLog.length;
+  const chaosCount = input.worldReactions.filter((r) => r.chaos).length;
+  const brokenAssumptions = input.assumptions.filter((a) => a.status === "broken");
+  const dead = input.outcome === "dead";
+  const chain: string[] = [];
+  if (input.decisionLog[0]) {
+    chain.push(
+      `R1 opening move "${input.decisionLog[0].actionLabel}" set the posture (${input.decisionLog[0].posture}) and burn trajectory.`,
+    );
+  }
+  if (chaosCount > 0) {
+    chain.push(`${chaosCount} chaos event(s) hit during the run — total uninsured downside.`);
+  }
+  if (brokenAssumptions.length > 0) {
+    chain.push(
+      `${brokenAssumptions.length} core assumption(s) broke without a corresponding pivot.`,
+    );
+  }
+  if (input.company.runwayMonths <= 0.5) {
+    chain.push(`Final runway: ${input.company.runwayMonths.toFixed(1)} mo — capital ran out before the next raise window.`);
+  }
+  if (chain.length === 0) {
+    chain.push(`Game ended at R${rounds} with cash $${(input.company.cash / 1_000_000).toFixed(2)}M.`);
+  }
+
+  return {
+    outcome: input.outcome,
+    gameId: input.gameId,
+    roundsSurvived: rounds,
+    headline: dead
+      ? `Northstar died in round ${rounds}${input.deathReason ? ` — ${input.deathReason}` : ""}.`
+      : `Northstar survived ${rounds} rounds and reached the endgame intact.`,
+    rootCauseChain: chain,
+    whatKilledUs: dead
+      ? (input.deathReason ??
+        "Burn outran funding; no compound bridge move was staged in time.")
+      : undefined,
+    whatSavedUs: dead
+      ? undefined
+      : "Staged secondary moves preserved optionality through chaos events.",
+    keyLessons: dead
+      ? [
+          "Single-action rounds in a 55%-chaos world are a coinflip; always pair primary canon moves with a parallel hedge.",
+          "Raise BEFORE runway falls under 3.0 mo — the dilution penalty for raising at 1.0 mo is brutal.",
+          "If two assumptions flip to broken in one round, pivot immediately. Do not 'wait one more round' for clarity.",
+        ]
+      : [
+          "Compound moves (canon action + staged parallel hedge) outperform pure canon picks by ~15% in chaos-heavy worlds.",
+          "Front-loaded fundraises bought the optionality that paid for the late-game compound moves.",
+        ],
+    compoundsThatWouldHaveWorked: dead
+      ? [
+          {
+            move: "raise-pre-seed + find-wedge (in parallel, not sequentially)",
+            why: "Sequenced runs ran out of cash during the interview phase; doing both at once buys 12 months of runway while still validating the wedge.",
+          },
+          {
+            move: "enterprise-moat + partner-fast (stack both)",
+            why: "Locks the procurement story AND the distribution story in the same round, hedging open-weight pricing collapse from two angles.",
+          },
+        ]
+      : [
+          {
+            move: "Repeatable: stage parallel moves every round, not just the obvious-tradeoff ones.",
+            why: "Even high-baseSuccess rounds are 40%+ death-by-chaos without a hedge.",
+          },
+        ],
+    generatedAt: new Date().toISOString(),
   };
 }
 

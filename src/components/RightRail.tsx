@@ -107,6 +107,12 @@ function AskWikiPanel() {
             ))}
           </div>
           <p className="advisor-rationale">{advisor.rationale}</p>
+          {advisor.playbook && (
+            <CompoundPlaybookCard
+              playbook={advisor.playbook}
+              primaryLabel={labelOf(options, advisor.playbook.primary.actionId)}
+            />
+          )}
           <p className="advisor-blindspot">
             <InfoSmall /> {advisor.blindSpot}
           </p>
@@ -116,6 +122,72 @@ function AskWikiPanel() {
         </>
       )}
     </section>
+  );
+}
+
+function CompoundPlaybookCard({
+  playbook,
+  primaryLabel,
+}: {
+  playbook: NonNullable<ReturnType<typeof useGame.getState>["rounds"][number]["advisor"]>["playbook"];
+  primaryLabel: string;
+}) {
+  if (!playbook) return null;
+  return (
+    <div className="playbook">
+      <div className="playbook-head">
+        <span className="playbook-tag">COMPOUND PLAYBOOK</span>
+        {playbook.lessonsCited && playbook.lessonsCited.length > 0 && (
+          <span className="playbook-cited-count">
+            {playbook.lessonsCited.length} lesson{playbook.lessonsCited.length === 1 ? "" : "s"} from prior games
+          </span>
+        )}
+      </div>
+      <div className="playbook-row">
+        <span className="playbook-label">Primary</span>
+        <div className="playbook-body">
+          <strong>{primaryLabel}</strong>
+          <span className="playbook-why"> — {playbook.primary.why}</span>
+        </div>
+      </div>
+      {playbook.combineWith.map((c, i) => (
+        <div className="playbook-row" key={i}>
+          <span className="playbook-label playbook-label--combine">+ Also</span>
+          <div className="playbook-body">
+            <span>{c.move}</span>
+            <span className="playbook-why"> — {c.why}</span>
+          </div>
+        </div>
+      ))}
+      {playbook.hedge && (
+        <div className="playbook-row">
+          <span className="playbook-label playbook-label--hedge">Hedge</span>
+          <div className="playbook-body">{playbook.hedge}</div>
+        </div>
+      )}
+      {playbook.pivotTriggers && playbook.pivotTriggers.length > 0 && (
+        <div className="playbook-row">
+          <span className="playbook-label playbook-label--pivot">Pivot if</span>
+          <div className="playbook-body">
+            <ul className="playbook-triggers">
+              {playbook.pivotTriggers.map((t, i) => (
+                <li key={i}>{t}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      {playbook.lessonsCited && playbook.lessonsCited.length > 0 && (
+        <div className="playbook-citations">
+          {playbook.lessonsCited.map((l, i) => (
+            <div key={i} className="playbook-citation">
+              <span className="playbook-cite-chip">{l.ref}</span>
+              <span className="playbook-cite-text">{l.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -108,6 +108,8 @@ class IngestPayload(BaseModel):
     world_reaction: WorldReaction
     new_assumptions: list[Assumption] = Field(default_factory=list)
     wiki_patches: list[WikiPatch] = Field(default_factory=list)
+    game_id: int = 1
+    custom_move: str = ""
 
 
 class QueryPayload(BaseModel):
@@ -115,11 +117,30 @@ class QueryPayload(BaseModel):
     limit: int = 5
 
 
+class PostMortemPayload(BaseModel):
+    game_id: int
+    outcome: str  # "dead" | "won"
+    rounds_survived: int
+    headline: str
+    root_cause_chain: list[str] = Field(default_factory=list)
+    what_killed_us: str = ""
+    what_saved_us: str = ""
+    key_lessons: list[str] = Field(default_factory=list)
+    compounds_that_would_have_worked: list[dict[str, str]] = Field(default_factory=list)
+    final_cash: float = 0.0
+    final_runway: float = 0.0
+    company_name: str = "Northstar Labs"
+
+
 def _payload_to_document(p: IngestPayload) -> str:
     lines: list[str] = [
-        f"# Round {p.round} — {p.event_title} ({p.event_date})",
+        f"# Game {p.game_id} · Round {p.round} — {p.event_title} ({p.event_date})",
         f"Event: {p.event_blurb}".rstrip(),
         f"{p.company_name} chose: {p.action_label} (posture: {p.posture}).",
+    ]
+    if p.custom_move:
+        lines.append(f"Compound / custom move: {p.custom_move}")
+    lines += [
         "",
         f"Headline: {p.world_reaction.headline}",
         "World reaction:",
@@ -146,6 +167,42 @@ def _payload_to_document(p: IngestPayload) -> str:
         for w in p.wiki_patches:
             if w.appendBody:
                 lines.append(f"  - [{w.id}] {w.appendBody}")
+    return "\n".join(lines)
+
+
+def _postmortem_to_document(p: PostMortemPayload) -> str:
+    """Synthesize a Karpathy-style entity page for a finished game.
+
+    Header is tagged [POST-MORTEM · Game N] so cross-game queries can recall it
+    distinctly from per-round entries.
+    """
+    lines: list[str] = [
+        f"# [POST-MORTEM · Game {p.game_id}] {p.company_name} — {p.outcome.upper()} after {p.rounds_survived} rounds",
+        f"Headline: {p.headline}",
+        f"Final state: cash ${p.final_cash:,.0f} · runway {p.final_runway:.1f} mo",
+        "",
+    ]
+    if p.what_killed_us:
+        lines.append(f"What killed us: {p.what_killed_us}")
+    if p.what_saved_us:
+        lines.append(f"What saved us: {p.what_saved_us}")
+    if p.root_cause_chain:
+        lines.append("")
+        lines.append("Root-cause chain (ordered):")
+        for i, step in enumerate(p.root_cause_chain, 1):
+            lines.append(f"  {i}. {step}")
+    if p.key_lessons:
+        lines.append("")
+        lines.append("Key lessons for future games:")
+        for lesson in p.key_lessons:
+            lines.append(f"  - {lesson}")
+    if p.compounds_that_would_have_worked:
+        lines.append("")
+        lines.append("Compound strategies that would have worked (in hindsight):")
+        for combo in p.compounds_that_would_have_worked:
+            move = combo.get("move", "")
+            why = combo.get("why", "")
+            lines.append(f"  - {move} — {why}")
     return "\n".join(lines)
 
 
@@ -273,6 +330,25 @@ async def reset() -> dict[str, Any]:
         return {"ok": True}
     except Exception as e:  # noqa: BLE001
         log.exception("reset failed")
+        _last_error = f"{type(e).__name__}: {e}"
+        raise HTTPException(500, _last_error)
+
+
+@app.post("/memory/postmortem")
+async def postmortem(payload: PostMortemPayload) -> dict[str, Any]:
+    """Ingest a structured post-mortem at end of game so future games can recall it."""
+    global _ingest_count, _last_error
+    if not _ready:
+        raise HTTPException(503, _last_error or "sidecar not ready (no LLM_API_KEY)")
+    doc = _postmortem_to_document(payload)
+    try:
+        async with _lock:
+            await cognee.remember(doc)  # type: ignore[union-attr]
+            _ingest_count += 1
+        _last_error = None
+        return {"ok": True, "ingested": _ingest_count, "chars": len(doc)}
+    except Exception as e:  # noqa: BLE001
+        log.exception("postmortem ingest failed")
         _last_error = f"{type(e).__name__}: {e}"
         raise HTTPException(500, _last_error)
 

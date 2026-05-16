@@ -109,12 +109,25 @@ export interface WorldReaction {
   chaos?: ChaosEvent;
 }
 
+export type ChaosKind =
+  | "shock"
+  | "acquisition-offer"
+  | "merger-offer"
+  | "ipo-window";
+
+export type GameEnding = "acquired" | "merged" | "ipo";
+
 export interface ChaosEvent {
   id: string;
   title: string;
   detail: string;
   capitalDelta?: number;
   runwayDelta?: number;
+  // Kind defaults to "shock" (the historical chaos behavior). When set to
+  // an ending-tier kind, endsGameAs may also be set — if so, the game ends
+  // with that status after the round resolves.
+  kind?: ChaosKind;
+  endsGameAs?: GameEnding;
 }
 
 export interface AdvisorRecommendation {
@@ -123,6 +136,28 @@ export interface AdvisorRecommendation {
   perOption: { actionId: string; estimatedSuccess: number }[];
   rationale: string;
   blindSpot: string;
+  playbook?: CompoundPlaybook;
+}
+
+export interface CompoundPlaybook {
+  primary: { actionId: string; why: string };
+  combineWith: { move: string; why: string }[];
+  hedge: string;
+  pivotTriggers: string[];
+  lessonsCited: { ref: string; text: string }[];
+}
+
+export interface PostMortem {
+  outcome: "dead" | "won" | "ongoing" | GameEnding;
+  gameId: number;
+  roundsSurvived: number;
+  headline: string;
+  rootCauseChain: string[];
+  whatKilledUs?: string;
+  whatSavedUs?: string;
+  keyLessons: string[];
+  compoundsThatWouldHaveWorked: { move: string; why: string }[];
+  generatedAt: string;
 }
 
 export interface RoundState {
@@ -148,4 +183,11 @@ export interface GameState {
   lintFindings: LintFinding[];
   worldReactions: WorldReaction[];
   lastUpdatedAt: string;
+  gameId: number;
+  // "won" is preserved for backward-compat with persisted v2 stores; new games
+  // surface end states as "ongoing" (reached the final round alive),
+  // "acquired" / "merged" / "ipo" (ending-tier chaos triggered), or "dead".
+  gameStatus: "alive" | "dead" | "won" | "ongoing" | GameEnding;
+  deathReason?: string;
+  postMortem?: PostMortem;
 }

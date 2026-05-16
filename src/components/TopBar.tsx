@@ -7,13 +7,26 @@ export function TopBar() {
   const rounds = useGame((s) => s.rounds);
   const rewind = useGame((s) => s.rewind);
   const runLint = useGame((s) => s.runLint);
-  const reset = useGame((s) => s.reset);
+  const newGame = useGame((s) => s.newGame);
+  const wipeBrain = useGame((s) => s.wipeBrain);
+  const gameId = useGame((s) => s.gameId);
+  const gameStatus = useGame((s) => s.gameStatus);
 
   const currentDate = (() => {
     const round = rounds[currentRoundIndex];
     if (!round) return "—";
     return round.eventId === "scene-1" ? "Scene 1" : labelForEvent(round.eventId);
   })();
+
+  function onWipeBrain() {
+    if (
+      window.confirm(
+        "Wipe the cognee brain? This clears all post-mortems and prior-game lessons. Use 'New Game' instead if you want the agent to remember.",
+      )
+    ) {
+      void wipeBrain();
+    }
+  }
 
   return (
     <header className="topbar">
@@ -25,16 +38,39 @@ export function TopBar() {
         <Pill label="Scenario" value={scenario} />
         <Pill label="Stage" value={stage} />
         <Pill label="Round" value={currentDate} icon={<CalendarIcon />} />
+        <span
+          className={`game-badge game-badge--${gameStatus}`}
+          title={
+            gameStatus === "alive"
+              ? `Game ${gameId} in progress. The agent's cognee brain carries lessons from all prior games.`
+              : gameStatus === "dead"
+                ? `Game ${gameId} ended in failure. Post-mortem ingested to cognee for the next run.`
+                : `Game ${gameId} survived. Post-mortem ingested.`
+          }
+        >
+          ● Game {gameId}
+          {gameStatus !== "alive" && (
+            <span className="game-badge-status"> · {gameStatus}</span>
+          )}
+        </span>
       </div>
       <div className="topbar-right">
         <button className="ghost-btn" onClick={() => rewind()} title="Rewind one round">
           <RewindIcon /> Rewind
         </button>
-        <button className="ghost-btn" onClick={() => reset()} title="Reset to Scene 1">
-          <ResetIcon /> Reset
+        <button
+          className="ghost-btn"
+          onClick={() => newGame()}
+          title="Start a new game. The cognee brain keeps every post-mortem so the next advisor proposes better compound moves."
+        >
+          <ResetIcon /> New Game
         </button>
-        <button className="ghost-btn">
-          <CompareIcon /> Compare Branches
+        <button
+          className="ghost-btn ghost-btn--danger"
+          onClick={onWipeBrain}
+          title="Wipe the cognee brain — clears all cross-game memory. Rarely what you want."
+        >
+          <BrainIcon /> Wipe Brain
         </button>
         <button className="ghost-btn" onClick={() => useGame.getState().openWikiSection("company-profile")}>
           <BookIcon /> Ask Company Wiki
@@ -125,11 +161,15 @@ function ResetIcon() {
   );
 }
 
-function CompareIcon() {
+function BrainIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M7 7H17M17 7L13 3M17 7L13 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M17 17H7M7 17L11 13M7 17L11 21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-1 5.7V15a3 3 0 0 0 4 2.8V20a2 2 0 1 0 4 0v-2.2a3 3 0 0 0 4-2.8v-1.3a3 3 0 0 0-1-5.7V7a3 3 0 0 0-3-3 3 3 0 0 0-2 .8A3 3 0 0 0 9 4Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

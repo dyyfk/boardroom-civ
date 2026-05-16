@@ -9,10 +9,10 @@ import { ROUND_ORDER, getCanonEvent } from "./canon";
 export const SEED_COMPANY: CompanyProfile = {
   name: "Northstar Labs",
   stage: "Seed",
-  cash: 2_400_000,
-  burnPerMonth: 320_000,
-  runwayMonths: 7.5,
-  raiseReadiness: 0.42,
+  cash: 1_600_000,
+  burnPerMonth: 400_000,
+  runwayMonths: 4.0,
+  raiseReadiness: 0.32,
   headcount: 11,
   thesis:
     "Boring, vertical AI for regulated enterprises. We sell certainty, not capability.",
@@ -58,7 +58,7 @@ function seededWiki(now: string): Record<WikiSection["id"], WikiSection> {
       updatedAt: now,
       body: `# Northstar Labs
 
-**Stage:** Seed · **Cash:** $2.4M · **Runway:** 7.5 mo · **Burn:** $320k/mo · **Headcount:** 11
+**Stage:** Seed · **Cash:** $1.6M · **Runway:** 4.0 mo · **Burn:** $400k/mo · **Headcount:** 11
 
 **Thesis.** Boring, vertical AI for regulated enterprises. We sell certainty, not capability.
 
@@ -111,7 +111,7 @@ function seededWiki(now: string): Record<WikiSection["id"], WikiSection> {
       body: `1. **Open-weight commoditization** — pricing collapses faster than our wedge sets.
 2. **Compute scarcity** — H100/H200 export controls tighten further; we get crowded out of capacity.
 3. **EU AI Act compliance** — phase 1 hits AUG 2026. We are not yet SOC2.
-4. **Runway** — 7.5 months. No bridge committed. A bad demo + a bad month = down-round.
+4. **Runway** — 4.0 months. No bridge committed. A bad demo + a bad month = down-round.
 5. **Talent** — two of three founders haven't shipped a regulated-enterprise product before.`,
     },
     "lint-report": {
@@ -123,7 +123,10 @@ function seededWiki(now: string): Record<WikiSection["id"], WikiSection> {
   };
 }
 
-export function buildInitialState(now = new Date().toISOString()): GameState {
+export function buildInitialState(
+  now = new Date().toISOString(),
+  gameId = 1,
+): GameState {
   return {
     scenario: "AI Platform Wars",
     stage: "Seed",
@@ -141,5 +144,7 @@ export function buildInitialState(now = new Date().toISOString()): GameState {
     lintFindings: [],
     worldReactions: [],
     lastUpdatedAt: now,
+    gameId,
+    gameStatus: "alive",
   };
 }

@@ -1,5 +1,12 @@
 import express from "express";
-import { agentAdvisor, agentLint, agentResolve, isLive } from "./agent";
+import {
+  agentAdvisor,
+  agentChaos,
+  agentLint,
+  agentPostMortem,
+  agentResolve,
+  isLive,
+} from "./agent";
 import { memoryStats, resetMemory } from "./cognee";
 
 const app = express();
@@ -33,6 +40,16 @@ app.post("/api/resolve", async (req, res) => {
   }
 });
 
+app.post("/api/chaos", async (req, res) => {
+  try {
+    const chaos = await agentChaos(req.body);
+    res.json({ chaos });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.post("/api/advisor", async (req, res) => {
   try {
     const out = await agentAdvisor(req.body);
@@ -47,6 +64,16 @@ app.post("/api/lint", async (req, res) => {
   try {
     const out = await agentLint(req.body);
     res.json(out);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post("/api/postmortem", async (req, res) => {
+  try {
+    const out = await agentPostMortem(req.body);
+    res.json({ postMortem: out });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: String(err) });

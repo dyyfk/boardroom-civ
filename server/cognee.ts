@@ -64,6 +64,8 @@ export interface IngestPayload {
   world_reaction: WorldReaction;
   new_assumptions?: AssumptionEntry[];
   wiki_patches?: { id: WikiSectionId; appendBody: string }[];
+  game_id?: number;
+  custom_move?: string;
 }
 
 // Fire-and-forget — never blocks the resolve response.
@@ -73,6 +75,32 @@ export function ingestRound(payload: IngestPayload): void {
     payload,
     INGEST_TIMEOUT_MS,
   );
+}
+
+export interface PostMortemPayload {
+  game_id: number;
+  outcome: "dead" | "won";
+  rounds_survived: number;
+  headline: string;
+  root_cause_chain: string[];
+  what_killed_us?: string;
+  what_saved_us?: string;
+  key_lessons: string[];
+  compounds_that_would_have_worked: { move: string; why: string }[];
+  final_cash: number;
+  final_runway: number;
+  company_name?: string;
+}
+
+export async function ingestPostMortem(
+  payload: PostMortemPayload,
+): Promise<boolean> {
+  const out = await call<{ ok: boolean }>(
+    "/memory/postmortem",
+    payload,
+    INGEST_TIMEOUT_MS,
+  );
+  return out?.ok === true;
 }
 
 export async function queryMemory(

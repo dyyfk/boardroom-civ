@@ -8,6 +8,7 @@ import type {
   DecisionLogEntry,
   GameState,
   LintFinding,
+  PostMortem,
   RoundState,
   WikiSection,
   WikiSectionId,
@@ -16,14 +17,17 @@ import type {
 import { ROUND_ORDER, getActionOptions, getCanonEvent } from "../data/canon";
 import { buildInitialState } from "../data/seed";
 
-const STORAGE_KEY = "boardroom-civ:v1";
+const STORAGE_KEY = "boardroom-civ:v2";
+const LEGACY_STORAGE_KEY = "boardroom-civ:v1";
 
 interface UIState {
   actionModalOpen: boolean;
   reactionModalOpen: boolean;
+  gameOverModalOpen: boolean;
   livingWikiOpenSection: WikiSectionId | null;
   resolvingRound: boolean;
   askingWiki: boolean;
+  generatingPostMortem: boolean;
   lastError: string | null;
 }
 
@@ -31,13 +35,15 @@ interface Actions {
   openActionModal(): void;
   closeActionModal(): void;
   dismissReaction(): void;
+  dismissGameOver(): void;
   openWikiSection(id: WikiSectionId | null): void;
 
   resolveRound(input: { actionId?: string; customMove?: string; posture: GameState["company"]["posture"] }): Promise<void>;
   askWiki(): Promise<void>;
   runLint(): Promise<void>;
 
-  reset(): void;
+  newGame(): void;
+  wipeBrain(): Promise<void>;
   rewind(): void;
 }
 
@@ -45,12 +51,25 @@ type Store = GameState & UIState & Actions;
 
 function loadPersisted(): GameState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Migrate v1 → v2 (adds gameId, gameStatus, postMortem). Best-effort: if
+      // anything looks off we just start fresh.
+      raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (raw) localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
     if (!Array.isArray(parsed.rounds)) return null;
-    return parsed as GameState;
+    return {
+      ...parsed,
+      gameId: typeof parsed.gameId === "number" ? parsed.gameId : 1,
+      gameStatus:
+        parsed.gameStatus === "dead" || parsed.gameStatus === "won"
+          ? parsed.gameStatus
+          : "alive",
+    } as GameState;
   } catch {
     return null;
   }
@@ -71,6 +90,10 @@ function persist(state: GameState) {
       lintFindings: state.lintFindings,
       worldReactions: state.worldReactions,
       lastUpdatedAt: state.lastUpdatedAt,
+      gameId: state.gameId,
+      gameStatus: state.gameStatus,
+      deathReason: state.deathReason,
+      postMortem: state.postMortem,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
   } catch {
@@ -123,6 +146,49 @@ interface LintResponse {
   wikiPatches: { id: WikiSectionId; body: string }[];
 }
 
+interface PostMortemResponse {
+  postMortem: PostMortem;
+}
+
+interface DeathCheck {
+  dead: boolean;
+  reason?: string;
+}
+
+function checkDeath(
+  newCompany: GameState["company"],
+  fundingDelta: number,
+  brokenThisRound: number,
+  chaosCapitalDelta: number,
+): DeathCheck {
+  if (newCompany.cash <= 0) {
+    return { dead: true, reason: "Cash hit zero. Payroll bounced." };
+  }
+  if (
+    newCompany.runwayMonths < 0.5 &&
+    fundingDelta <= 0 &&
+    chaosCapitalDelta <= 0
+  ) {
+    return {
+      dead: true,
+      reason: `Runway collapsed to ${newCompany.runwayMonths.toFixed(1)} mo with no funding in flight.`,
+    };
+  }
+  if (brokenThisRound >= 2) {
+    return {
+      dead: true,
+      reason: `Thesis collapse — ${brokenThisRound} core assumptions broke in a single round.`,
+    };
+  }
+  return { dead: false };
+}
+
+// Each round in the canon timeline spans roughly 2 months of "company time"
+// (the 12 rounds run from Jan 2025 → Feb 2027). To make runway actually
+// drain across the game, we deduct 2 months of burn from cash every round,
+// in addition to action-specific funding/burn deltas and chaos shocks.
+const MONTHS_PER_ROUND = 2;
+
 function applyCapital(
   company: GameState["company"],
   burnDelta: number,
@@ -131,7 +197,11 @@ function applyCapital(
 ): GameState["company"] {
   const newBurn = Math.max(50_000, company.burnPerMonth + burnDelta);
   const chaosCash = chaos?.capitalDelta ?? 0;
-  const newCash = Math.max(0, company.cash + fundingDelta + chaosCash);
+  const periodBurn = newBurn * MONTHS_PER_ROUND;
+  const newCash = Math.max(
+    0,
+    company.cash + fundingDelta + chaosCash - periodBurn,
+  );
   const runway = newCash / newBurn;
   const fundingBoost = fundingDelta > 0 ? 0.18 : 0;
   const burnPenalty = burnDelta > 0 ? -0.05 : 0;
@@ -177,9 +247,11 @@ export const useGame = create<Store>((set, get) => ({
   ...(loadPersisted() ?? buildInitialState()),
   actionModalOpen: false,
   reactionModalOpen: false,
+  gameOverModalOpen: false,
   livingWikiOpenSection: null,
   resolvingRound: false,
   askingWiki: false,
+  generatingPostMortem: false,
   lastError: null,
 
   openActionModal: () => set({ actionModalOpen: true }),
@@ -187,11 +259,16 @@ export const useGame = create<Store>((set, get) => ({
   dismissReaction: () => {
     set({ reactionModalOpen: false });
     const state = get();
+    if (state.gameStatus !== "alive") {
+      set({ gameOverModalOpen: true });
+      return;
+    }
     const next = state.rounds[state.currentRoundIndex];
     if (next && !next.resolved) {
       set({ actionModalOpen: true });
     }
   },
+  dismissGameOver: () => set({ gameOverModalOpen: false }),
   openWikiSection: (id) => set({ livingWikiOpenSection: id }),
 
   async resolveRound({ actionId, customMove, posture }) {
@@ -215,6 +292,7 @@ export const useGame = create<Store>((set, get) => ({
         assumptions: state.assumptions,
         decisionLog: state.decisionLog,
         wiki: state.wiki,
+        gameId: state.gameId,
       });
 
       const burnDelta = action?.burnDelta ?? 0;
@@ -266,12 +344,19 @@ export const useGame = create<Store>((set, get) => ({
       const updatedAssumptionMap = new Map(
         state.assumptions.map((a) => [a.id, a]),
       );
+      let brokenThisRound = 0;
       for (const u of resp.updatedAssumptionIds) {
         const existing = updatedAssumptionMap.get(u.id);
         if (existing) {
+          if (existing.status !== "broken" && u.status === "broken") {
+            brokenThisRound += 1;
+          }
           updatedAssumptionMap.set(u.id, { ...existing, status: u.status });
         }
       }
+      brokenThisRound += resp.newAssumptions.filter(
+        (a) => a.status === "broken",
+      ).length;
       const newAssumptions: AssumptionEntry[] = [
         ...updatedAssumptionMap.values(),
         ...resp.newAssumptions,
@@ -305,19 +390,44 @@ export const useGame = create<Store>((set, get) => ({
         };
       }
 
+      // Lethality check — startups die. Three failure modes:
+      //   1. cash <= 0
+      //   2. runway < 0.5mo with no inbound funding or positive chaos
+      //   3. 2+ active assumptions flipped to broken in one round
+      const chaosCapitalDelta = resp.worldReaction.chaos?.capitalDelta ?? 0;
+      const deathCheck = checkDeath(
+        newCompany,
+        fundingDelta,
+        brokenThisRound,
+        chaosCapitalDelta,
+      );
+
+      let gameStatus: GameState["gameStatus"] = state.gameStatus;
+      let deathReason: string | undefined = state.deathReason;
+      if (deathCheck.dead) {
+        gameStatus = "dead";
+        deathReason = deathCheck.reason;
+      } else if (!nextEventId) {
+        // Final round resolved without dying → won.
+        gameStatus = "won";
+      }
+
       const newState: GameState = {
         ...state,
         company: newCompany,
         rounds: newRounds,
-        currentRoundIndex: nextEventId
-          ? state.currentRoundIndex + 1
-          : state.currentRoundIndex,
+        currentRoundIndex:
+          nextEventId && gameStatus === "alive"
+            ? state.currentRoundIndex + 1
+            : state.currentRoundIndex,
         branch: dedupedBranch,
         decisionLog: newDecisionLog,
         assumptions: newAssumptions,
         worldReactions: [...state.worldReactions, resp.worldReaction],
         wiki: wikiNext,
         lastUpdatedAt: now,
+        gameStatus,
+        deathReason,
       };
 
       persist(newState);
@@ -327,6 +437,30 @@ export const useGame = create<Store>((set, get) => ({
         actionModalOpen: false,
         reactionModalOpen: true,
       });
+
+      // End of game → fire the post-mortem agent so cognee gets the lesson
+      // before the user clicks "Play Game 2". This is the self-improvement
+      // hand-off — Game N+1's advisor will recall this in its prompt.
+      if (gameStatus !== "alive") {
+        set({ generatingPostMortem: true });
+        try {
+          const pmResp = await callAgent<PostMortemResponse>("postmortem", {
+            gameId: newState.gameId,
+            outcome: gameStatus,
+            company: newCompany,
+            decisionLog: newDecisionLog,
+            worldReactions: newState.worldReactions,
+            assumptions: newAssumptions,
+            deathReason,
+          });
+          const withPM: GameState = { ...newState, postMortem: pmResp.postMortem };
+          persist(withPM);
+          set({ ...withPM, generatingPostMortem: false });
+        } catch (pmErr) {
+          console.error("post-mortem failed:", pmErr);
+          set({ generatingPostMortem: false });
+        }
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       set({ resolvingRound: false, lastError: message });
@@ -349,6 +483,7 @@ export const useGame = create<Store>((set, get) => ({
         assumptions: state.assumptions,
         decisionLog: state.decisionLog,
         wiki: state.wiki,
+        gameId: state.gameId,
       });
 
       const currentRound = state.rounds[state.currentRoundIndex];
@@ -409,22 +544,48 @@ export const useGame = create<Store>((set, get) => ({
     }
   },
 
-  reset() {
-    const fresh = buildInitialState();
+  newGame() {
+    // Start a new game but KEEP the cognee brain. This is the self-improvement
+    // hand-off: Game N's post-mortem is already in the graph, and Game N+1's
+    // advisor will recall it. We increment gameId so per-round ingests stay
+    // attributable across the cross-game wiki.
+    const prevId = get().gameId ?? 1;
+    const fresh = buildInitialState(undefined, prevId + 1);
     persist(fresh);
     set({
       ...fresh,
       actionModalOpen: false,
       reactionModalOpen: false,
+      gameOverModalOpen: false,
       livingWikiOpenSection: null,
       resolvingRound: false,
       askingWiki: false,
+      generatingPostMortem: false,
       lastError: null,
     });
-    // Wipe the cognee graph too so the Memory Graph badge resets along with
-    // the game state. Fire-and-forget — if the sidecar is offline, we don't
-    // care; the graph was already empty from its perspective.
-    fetch("/api/memory-reset", { method: "POST" }).catch(() => {});
+  },
+
+  async wipeBrain() {
+    // Hard reset: clear cognee graph too. Use this only when you genuinely
+    // want to start the agent over with no prior-game memory.
+    const fresh = buildInitialState(undefined, 1);
+    persist(fresh);
+    set({
+      ...fresh,
+      actionModalOpen: false,
+      reactionModalOpen: false,
+      gameOverModalOpen: false,
+      livingWikiOpenSection: null,
+      resolvingRound: false,
+      askingWiki: false,
+      generatingPostMortem: false,
+      lastError: null,
+    });
+    try {
+      await fetch("/api/memory-reset", { method: "POST" });
+    } catch {
+      // sidecar offline — local state already reset
+    }
   },
 
   rewind() {
