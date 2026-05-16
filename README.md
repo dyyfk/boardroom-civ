@@ -86,29 +86,95 @@ The lint results become part of the demo: users can see the agent improve its ow
 7. **Lint and self-improve.**
    The agent checks the wiki and patches weak spots before the next turn.
 
-## MVP Demo Flow
+## Quickstart
 
-The 3-minute demo should make the memory loop visible:
+```bash
+npm install
+npm run dev
+```
 
-1. Show the fictional company dashboard.
-2. Ingest a major event: "A competitor open-sources a strong AI model."
-3. Show the generated wiki pages for the event, competitor, market pressure, and company risks.
-4. User chooses a response: "Launch our own open model, but reserve enterprise features."
-5. Agent simulates the world reaction.
-6. Wiki updates: strategy changes, competitor page changes, timeline entry appears, risk register changes.
-7. User asks: "Why did investor confidence fall?"
-8. Agent answers from the wiki.
-9. Run lint.
-10. Lint catches a missing assumption or contradiction and updates the wiki.
+Then open <http://127.0.0.1:5180/>.
 
-## Suggested UI
+The dev script runs both servers concurrently:
 
-- **Event Feed:** major world events presented as news cards.
-- **Leadership Console:** action cards plus custom prompt input.
-- **Company Dashboard:** cash, reputation, talent, market share, product velocity, legal risk, customer trust, and compute capacity.
-- **World Reaction Panel:** simulated consequences after each decision.
-- **Wiki Sidebar:** persistent pages for company state, timeline, competitors, assumptions, risks, and decision log.
-- **Lint Panel:** visible checks showing how the agent improves the wiki.
+| service       | port | role                                                  |
+| ------------- | ---: | ----------------------------------------------------- |
+| Vite (web)    | 5180 | React app                                             |
+| Express (api) | 5181 | Agent endpoints (`/api/resolve`, `/advisor`, `/lint`) |
+
+### Going live with Claude
+
+Copy `.env.example` → `.env` and set:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-opus-4-7
+```
+
+Restart `npm run dev`. The server log will switch from `OFFLINE (deterministic fallback)` to `LIVE (Anthropic API)`. Every action resolution, advisor query, and lint pass will be a real LLM call.
+
+If a call fails for any reason the server falls back per-request, so the demo never breaks mid-show.
+
+## MVP Demo Flow (3 minutes)
+
+1. **Scene 1 — Idea phase.** Right rail shows three founding moves. Open **Take Action**, pick *Raise pre-seed*, posture *Balanced*, **Resolve round**.
+2. **GPT-4.5 launch.** Top bar now reads *Mar 2025*. Hit **Ask Company Wiki** — the advisor returns a ranked recommendation with success bars and a *blind-spot* warning that chaos events are not modeled.
+3. **Resolve a few rounds.** Watch the branch fill in. Capital, runway, and raise readiness all move with each decision. A chaos event will fire on roughly one in three rounds.
+4. **Open the Living Wiki.** Click any section — *Company Profile*, *Decision Log*, *Assumptions*. Each page was rewritten by the agent in response to the rounds you played.
+5. **Run Lint** in the top bar. The agent inspects its own wiki and surfaces findings (e.g. *runway snapshot stale*, *shaky assumption not linked*).
+6. **Reset** returns the world to Scene 1 — no branch history, fresh wiki.
+
+## UI
+
+- **Timeline Map:** large expandable branching map with canon reality and Northstar's branch.
+- **Current Moment Panel:** compact summary of the current scene or canon event.
+- **Take Action Modal:** the only place where the user chooses a response, posture, advisor query, and round resolution.
+- **Capital Panel:** cash, burn, runway, and raise readiness.
+- **Living Wiki Panel:** company profile, canon timelines, decision log, assumptions, and lint.
+- **World Reaction Panel:** latest simulated consequences and chaos events (rendered inside the Decision Log section of the wiki drawer).
+
+## Architecture
+
+- **State** lives in a Zustand store (`src/state/store.ts`). The store is persisted to `localStorage` under `boardroom-civ:v1`, so a refresh keeps your branch.
+- **Round resolution** is a single `POST /api/resolve` call. The server returns: a `worldReaction` (customers / investors / regulators / competitors / employees / optional chaos), `branchOutcomes`, `newAssumptions`, `updatedAssumptionIds`, and `wikiPatches`. The store applies them atomically and rerenders the timeline, capital, and wiki.
+- **Wiki sections** are kept as Markdown strings on `state.wiki`. The drawer renders them via a small inline Markdown renderer. The *Decision Log*, *Assumptions*, and *Company Profile* sections are re-derived from structured state every round. Other sections (*Competitors*, *Risks*) are append-only and patched by the agent.
+- **The advisor never sees chaos.** Server-side, the advisor endpoint only receives wiki state — no chaos seed. That's deliberate: the demo makes the point that wiki-based reasoning has known limits.
+
+## Repository Layout
+
+```
+.
+├── index.html
+├── package.json
+├── vite.config.ts
+├── server/
+│   ├── index.ts        # Express, three routes, port 5181
+│   ├── agent.ts        # Anthropic SDK calls + JSON parse
+│   ├── fallback.ts     # deterministic offline simulator
+│   └── types.ts        # re-exports of src/types.ts
+└── src/
+    ├── main.tsx
+    ├── App.tsx
+    ├── types.ts
+    ├── data/
+    │   ├── canon.ts    # 6 canon events + action templates
+    │   └── seed.ts     # Northstar Labs profile + seeded wiki
+    ├── state/store.ts  # Zustand store, persist, reducers
+    ├── lib/format.ts
+    ├── components/
+    │   ├── TopBar.tsx
+    │   ├── TimelineMap.tsx
+    │   ├── RightRail.tsx
+    │   ├── TakeActionModal.tsx
+    │   └── LivingWikiDrawer.tsx
+    └── styles/globals.css
+```
+
+## Known Limits
+
+- One company (Northstar Labs) and one scenario (AI Platform Wars). The canon timeline is fixed; you can extend `CANON_TIMELINE` in `src/data/canon.ts`.
+- The timeline alignment treats Scene 1 as a virtual prelude that lives in the right rail, not on the map. Once the player resolves Scene 1, the branch row aligns with the canon row column-by-column.
+- The minimap and zoom controls in the timeline footer are visual only — hooking up pan/zoom is left for later.
 
 ## Working Title Options
 
