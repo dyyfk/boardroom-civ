@@ -20,6 +20,7 @@ const STORAGE_KEY = "boardroom-civ:v1";
 
 interface UIState {
   actionModalOpen: boolean;
+  reactionModalOpen: boolean;
   livingWikiOpenSection: WikiSectionId | null;
   resolvingRound: boolean;
   askingWiki: boolean;
@@ -29,6 +30,7 @@ interface UIState {
 interface Actions {
   openActionModal(): void;
   closeActionModal(): void;
+  dismissReaction(): void;
   openWikiSection(id: WikiSectionId | null): void;
 
   resolveRound(input: { actionId?: string; customMove?: string; posture: GameState["company"]["posture"] }): Promise<void>;
@@ -174,6 +176,7 @@ function buildBranchNode(
 export const useGame = create<Store>((set, get) => ({
   ...(loadPersisted() ?? buildInitialState()),
   actionModalOpen: false,
+  reactionModalOpen: false,
   livingWikiOpenSection: null,
   resolvingRound: false,
   askingWiki: false,
@@ -181,6 +184,14 @@ export const useGame = create<Store>((set, get) => ({
 
   openActionModal: () => set({ actionModalOpen: true }),
   closeActionModal: () => set({ actionModalOpen: false }),
+  dismissReaction: () => {
+    set({ reactionModalOpen: false });
+    const state = get();
+    const next = state.rounds[state.currentRoundIndex];
+    if (next && !next.resolved) {
+      set({ actionModalOpen: true });
+    }
+  },
   openWikiSection: (id) => set({ livingWikiOpenSection: id }),
 
   async resolveRound({ actionId, customMove, posture }) {
@@ -310,7 +321,12 @@ export const useGame = create<Store>((set, get) => ({
       };
 
       persist(newState);
-      set({ ...newState, resolvingRound: false, actionModalOpen: false });
+      set({
+        ...newState,
+        resolvingRound: false,
+        actionModalOpen: false,
+        reactionModalOpen: true,
+      });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       set({ resolvingRound: false, lastError: message });
@@ -399,6 +415,7 @@ export const useGame = create<Store>((set, get) => ({
     set({
       ...fresh,
       actionModalOpen: false,
+      reactionModalOpen: false,
       livingWikiOpenSection: null,
       resolvingRound: false,
       askingWiki: false,

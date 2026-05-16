@@ -27,6 +27,9 @@ export function TimelineMap() {
 
   const currentIndex = ROUND_ORDER.indexOf(currentEventId);
 
+  const currentEvent = getCanonEvent(currentEventId);
+  const currentRoundResolved = rounds[ROUND_ORDER.indexOf(currentEventId)]?.resolved;
+
   return (
     <div className="timeline-card">
       <div className="timeline-header">
@@ -37,6 +40,24 @@ export function TimelineMap() {
           <InfoDot />
         </div>
       </div>
+
+      {!currentRoundResolved && (
+        <div className="round-banner">
+          <div className="round-banner-left">
+            <span className="round-banner-pulse" aria-hidden />
+            <div>
+              <div className="round-banner-eyebrow">
+                Round {ROUND_ORDER.indexOf(currentEventId) + 1} · {currentEvent.date}
+              </div>
+              <div className="round-banner-title">{currentEvent.title}</div>
+              <div className="round-banner-blurb">{currentEvent.blurb}</div>
+            </div>
+          </div>
+          <button className="primary-btn round-banner-btn" onClick={openModal}>
+            Take Action →
+          </button>
+        </div>
+      )}
 
       <div className="timeline-body">
         <TrackHeader label="Canon Reality" sublabel="What really happened" icon={<GlobeIcon />} />
