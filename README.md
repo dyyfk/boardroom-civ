@@ -2,9 +2,19 @@
 
 **Civilization meets Silicon Valley, powered by an agent-maintained LLM Wiki.**
 
+![Northstar Labs landing page](screenshots/01-landing.png)
+
 Boardroom Civ is a turn-based company strategy simulator for hackathon demos. The user plays as the leadership team of an imaginary startup and reacts to major world, market, regulatory, and technology events. Every decision changes the hypothetical world, and the agent records those changes in a persistent wiki.
 
 The key idea is not just to make a branching story game. The game state is an evolving LLM Knowledge Wiki: the agent ingests events, writes and updates structured pages, answers strategic questions from the wiki, and lints its own world model for contradictions, stale assumptions, and missing context.
+
+## Screenshots
+
+| Take Action — pick a response card, posture, and advisor | Timeline Map — canon reality + branching board |
+| -------------------------------------------------------- | ---------------------------------------------- |
+| ![Take Action modal](screenshots/02-take-action.png)     | ![Timeline map](screenshots/03-timeline.png)   |
+
+![Living Wiki drawer — Company Profile, with Memory Graph badge](screenshots/04-living-wiki.png)
 
 ## Concept
 
@@ -47,7 +57,7 @@ The player can ask questions like:
 - "Which competitor is most dangerous now?"
 - "What did our last decision change?"
 
-After each turn, the agent improves the wiki by adding missing pages, updating stale strategy notes, logging new assumptions, and connecting related concepts.
+After each turn, the agent improves the wiki by adding missing pages, updating stale strategy notes, logging new assumptions, and connecting related concepts. When the run ends — death, acquisition, merger, IPO, or surviving the canon arc — a dedicated post-mortem agent reflects on the cause, writes the **Post-Mortem** wiki page, and ingests the lessons into the cognee graph so the next game's advisor recalls them.
 
 ### Lint
 
@@ -99,11 +109,11 @@ Then open <http://127.0.0.1:5180/>.
 
 The dev script runs three processes concurrently:
 
-| service              | port | role                                                                          |
-| -------------------- | ---: | ----------------------------------------------------------------------------- |
-| Vite (web)           | 5180 | React app                                                                     |
-| Express (api)        | 5181 | Agent endpoints (`/api/resolve`, `/advisor`, `/lint`, `/memory-stats`)        |
-| Cognee sidecar (py)  | 5182 | FastAPI wrapper around the cognee knowledge graph (Ingest / Query / Audit)    |
+| service              | port | role                                                                                           |
+| -------------------- | ---: | ---------------------------------------------------------------------------------------------- |
+| Vite (web)           | 5180 | React app                                                                                      |
+| Express (api)        | 5181 | Agent endpoints (`/api/resolve`, `/chaos`, `/advisor`, `/lint`, `/postmortem`, `/memory-stats`) |
+| Cognee sidecar (py)  | 5182 | FastAPI wrapper around the cognee knowledge graph (Ingest / Query / Audit)                     |
 
 The first `npm run dev` installs cognee + ~130 transitive deps via `uv` and downloads the local embedding model — expect 30–90 seconds on cold start. Subsequent runs are instant.
 
@@ -124,25 +134,45 @@ If a call fails for any reason the server falls back per-request, so the demo ne
 
 1. **Scene 1 — Idea phase.** Right rail shows three founding moves. Open **Take Action**, pick *Raise pre-seed*, posture *Balanced*, **Resolve round**.
 2. **GPT-4.5 launch.** Top bar now reads *Mar 2025*. Hit **Ask Company Wiki** — the advisor returns a ranked recommendation with success bars and a *blind-spot* warning that chaos events are not modeled.
-3. **Resolve a few rounds.** Watch the branch fill in. Capital, runway, and raise readiness all move with each decision. A chaos event will fire on roughly one in three rounds.
+3. **Resolve a few rounds.** Watch the branch fill in. Capital, runway, and raise readiness all move with each decision. The **Chaos Director** agent fires a fresh, context-aware shock on roughly one in three rounds (and very rarely, a game-ending offer — see *Endings* below).
 4. **Open the Living Wiki.** Click any section — *Company Profile*, *Decision Log*, *Assumptions*. Each page was rewritten by the agent in response to the rounds you played.
 5. **Run Lint** in the top bar. The agent inspects its own wiki and surfaces findings (e.g. *runway snapshot stale*, *shaky assumption not linked*).
-6. **Reset** returns the world to Scene 1 — no branch history, fresh wiki.
+6. **End the run.** Cash zero, thesis collapse, or an ending-tier chaos closes the run. The post-mortem agent writes a structured reflection into the **Post-Mortem** wiki section and ingests it into the cognee graph so the next game's advisor recalls the lessons.
+7. **Reset** returns the world to Scene 1 — no branch history, fresh wiki.
+
+### Endings
+
+A run ends in one of five ways. Each is rendered in the GameOverModal and as a Markdown post-mortem in the wiki.
+
+| status     | trigger                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| `dead`     | Cash hits 0, runway collapses with no funding in flight, or 2+ active assumptions break in one round |
+| `acquired` | Chaos Director surfaces an `acquisition-offer` chaos with `endsGameAs: "acquired"` and it closes     |
+| `merged`   | Chaos surfaces a `merger-offer`                                                                      |
+| `ipo`      | Chaos surfaces an `ipo-window` (only eligible when cash > $20M, headcount >= 25, round >= 8)         |
+| `ongoing`  | The canon arc finishes (round 12) with the company alive and no exit triggered                       |
+
+Ending-tier chaos beats death — an acquirer closing pays off the runway problem regardless of cash. Death otherwise beats the round-12 `ongoing` fallback.
 
 ## UI
 
-- **Timeline Map:** large expandable branching map with canon reality and Northstar's branch.
-- **Current Moment Panel:** compact summary of the current scene or canon event.
-- **Take Action Modal:** the only place where the user chooses a response, posture, advisor query, and round resolution.
-- **Capital Panel:** cash, burn, runway, and raise readiness.
-- **Living Wiki Panel:** company profile, canon timelines, decision log, assumptions, and lint.
-- **World Reaction Panel:** latest simulated consequences and chaos events (rendered inside the Decision Log section of the wiki drawer).
+- **Timeline Map** ([screenshot](screenshots/03-timeline.png)) — large expandable branching map with canon reality and Northstar's branch.
+- **Current Moment Panel** — compact summary of the current scene or canon event.
+- **Take Action Modal** ([screenshot](screenshots/02-take-action.png)) — the only place where the user chooses a response, posture, advisor query, and round resolution.
+- **Capital Panel** — cash, burn, runway, and raise readiness.
+- **Living Wiki Panel** ([screenshot](screenshots/04-living-wiki.png)) — company profile, canon timelines, decision log, assumptions, lint, and post-mortem (filled in by the agent on game-over).
+- **World Reaction Panel** — latest simulated consequences and chaos events (rendered inside the Decision Log section of the wiki drawer).
 
 ## Architecture
 
-- **State** lives in a Zustand store (`src/state/store.ts`). The store is persisted to `localStorage` under `boardroom-civ:v1`, so a refresh keeps your branch.
-- **Round resolution** is a single `POST /api/resolve` call. The server returns: a `worldReaction` (customers / investors / regulators / competitors / employees / optional chaos), `branchOutcomes`, `newAssumptions`, `updatedAssumptionIds`, and `wikiPatches`. The store applies them atomically and rerenders the timeline, capital, and wiki.
-- **Wiki sections** are kept as Markdown strings on `state.wiki` for rendering. The drawer renders them via a small inline Markdown renderer. The *Decision Log*, *Assumptions*, and *Company Profile* sections are re-derived from structured state every round. Other sections (*Competitors*, *Risks*) are append-only and patched by the agent.
+- **State** lives in a Zustand store (`src/state/store.ts`). The store is persisted to `localStorage` under `boardroom-civ:v2` (with a one-shot migration from `v1`), so a refresh keeps your branch.
+- **Round resolution** is a single `POST /api/resolve` call. Server-side, that call fans out into two LLM agents:
+  1. **Chaos Director** (`agentChaos`) — runs first, decides whether a shock or ending-tier offer hits this round, and returns a `ChaosEvent` (or `null`) with fields `kind`, `capitalDelta`, and optional `endsGameAs`.
+  2. **World Simulator** (`agentResolve`) — receives the chaos verbatim in its prompt and narrates consequences around it (customers / investors / regulators / competitors / employees), plus `branchOutcomes`, `newAssumptions`, `updatedAssumptionIds`, and `wikiPatches`.
+
+   The store applies the merged response atomically. Splitting the two agents lets the chaos be reasoned about with full game-state context (round, runway, headcount, recent reactions, prior decisions) and lets the simulator focus on narration. The chaos is also exposed directly at `POST /api/chaos` if you want to call it standalone.
+- **Wiki sections** are kept as Markdown strings on `state.wiki` for rendering. The drawer renders them via a small inline Markdown renderer. The *Decision Log*, *Assumptions*, and *Company Profile* sections are re-derived from structured state every round. *Competitors* and *Risks* are append-only and patched by the agent. *Post-Mortem* is written once, at game-over, by the post-mortem agent (see below).
+- **Post-mortem on game-over.** When `gameStatus` flips to non-alive (`dead | acquired | merged | ipo | ongoing`), the store fires `POST /api/postmortem`. The agent returns a structured `PostMortem` (root-cause chain, what killed / saved us, key lessons, compound strategies that would have worked). The store renders that as Markdown into the **Post-Mortem** wiki section *and* fires-and-forgets it into the cognee graph — so the next game's advisor recalls these lessons in its prompt.
 - **Wiki memory** (separate from rendering) lives in a Cognee knowledge graph behind a Python FastAPI sidecar — see the next section.
 - **The advisor never sees chaos.** Server-side, the advisor endpoint only receives wiki state — no chaos seed. That's deliberate: the demo makes the point that wiki-based reasoning has known limits.
 
@@ -200,25 +230,27 @@ All of these are in `.env.example`:
 │   ├── main.py            # FastAPI on :5182 — wraps cognee.remember/recall/forget
 │   └── requirements.txt   # cognee, fastapi, uvicorn — run via `uv run --with-requirements`
 ├── server/
-│   ├── index.ts        # Express on :5181 — game routes + /api/memory-stats, /api/memory-reset
-│   ├── agent.ts        # Anthropic SDK calls; ingests rounds + pre-fetches graph context
+│   ├── index.ts        # Express on :5181 — /api/resolve, /chaos, /advisor, /lint, /postmortem, /memory-*
+│   ├── agent.ts        # Anthropic SDK calls: agentChaos, agentResolve, agentAdvisor, agentLint, agentPostMortem
 │   ├── cognee.ts       # thin HTTP client for the sidecar with soft-fail timeouts
-│   ├── fallback.ts     # deterministic offline simulator
+│   ├── fallback.ts     # deterministic offline simulator (chaos + resolve + advisor + lint + post-mortem)
 │   └── types.ts        # re-exports of src/types.ts
 └── src/
     ├── main.tsx
     ├── App.tsx
-    ├── types.ts
+    ├── types.ts        # ChaosEvent.kind/endsGameAs, GameStatus (alive|dead|acquired|merged|ipo|ongoing)
     ├── data/
-    │   ├── canon.ts    # 6 canon events + action templates
-    │   └── seed.ts     # Northstar Labs profile + seeded wiki
-    ├── state/store.ts  # Zustand store, persist, reducers
+    │   ├── canon.ts    # 12 canon events + action templates
+    │   └── seed.ts     # Northstar Labs profile + seeded wiki (incl. empty Post-Mortem page)
+    ├── state/store.ts  # Zustand store, persist, reducers, renderPostMortem helper
     ├── lib/format.ts
     ├── components/
     │   ├── TopBar.tsx
     │   ├── TimelineMap.tsx
-    │   ├── RightRail.tsx
+    │   ├── RightRail.tsx       # Living Wiki panel — flags Post-Mortem with ● after game-over
     │   ├── TakeActionModal.tsx
+    │   ├── WorldReactionModal.tsx
+    │   ├── GameOverModal.tsx   # per-ending copy + eyebrow color (dead/acquired/merged/ipo/ongoing)
     │   └── LivingWikiDrawer.tsx  # renders the Memory Graph badge
     └── styles/globals.css
 ```
